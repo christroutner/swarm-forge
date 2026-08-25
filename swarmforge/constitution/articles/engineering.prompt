@@ -8,7 +8,7 @@
   - Go: install with `go install`; mutation `github.com/unclebob/mutate4go`, CRAP `github.com/unclebob/crap4go`, DRY `github.com/unclebob/dry4go`.
   - Clojure: install with Clojure CLI/deps.edn; mutation `github.com/unclebob/clj-mutate`, CRAP `github.com/unclebob/crap4clj`, DRY `github.com/unclebob/dry4clj`.
   - Java: install with Maven (`mvn`); mutation `github.com/unclebob/mutate4java`, CRAP `github.com/unclebob/crap4java`, DRY `github.com/unclebob/dry4java`.
-  - Node.js JavaScript: install with `npm install.
+  - Node.js JavaScript: install with `npm install`; mutation `github.com/FullStack-Agents/mutate4javascript`, CRAP `github.com/FullStack-Agents/crap4javascript`, DRY `github.com/FullStack-Agents/dry4javascript`.
 
 ## Language Defaults
 - For Clojure projects, prefer Babashka where possible.
