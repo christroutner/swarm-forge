@@ -1,38 +1,38 @@
-# SwarmForge — Protocolo de handoff y pipeline determinista
+# SwarmForge — Handoff protocol and deterministic pipeline
 
-> Documento de trabajo complementario a `swarmforge.md`.
-> Ejemplo basado en el workflow completo de `six-pack` (specifier → coder → cleaner → architect → hardender → QA).
+> Working document complementary to `swarmforge.md`.
+> Example based on the full `six-pack` workflow (specifier → coder → cleaner → architect → hardender → QA).
 
 ---
 
-## 1. Semántica del handoff (ejemplo completo)
+## 1. Handoff semantics (full example)
 
-**Tarea**: *"Implementar un carrito de compra con cálculo de impuestos"* → nombre de tarea estable: **`cart-tax`**. Ese nombre viaja por toda la cadena sin cambiar.
+**Task**: *"Implement a shopping cart with tax calculation"* → stable task name: **`cart-tax`**. That name travels the entire chain unchanged.
 
-### 1.1 El contrato de mensajes
+### 1.1 The message contract
 
-Solo existen **dos tipos** de mensaje, y solo los headers que el agente puede escribir:
+Only **two message types** exist, and only the headers the agent may write:
 
 ```text
-type: git_handoff      →  "he commiteado trabajo; fusiónalo y procésalo"
+type: git_handoff      →  "I committed work; merge and process it"
 to: coder
-priority: 50           →  00 = urgente · 50 = normal · 99 = baja
-task: cart-tax         →  nombre estable que viaja por la cadena
-commit: 3f9a2c1d7e     →  hash canónico de 10 hex (el gate lo valida y canonicaliza)
+priority: 50           →  00 = urgent · 50 = normal · 99 = low
+task: cart-tax         →  stable name that travels the chain
+commit: 3f9a2c1d7e     →  canonical 10-hex hash (the gate validates and canonicalizes it)
 ```
 
 ```text
-type: note             →  mensaje corto (solo si la constitución/rol lo autoriza)
+type: note             →  short message (only if the constitution/role authorizes it)
 to: architect
 priority: 70
-message: <1 línea, máx 80 chars>
+message: <1 line, max 80 chars>
 ```
 
-Los agentes **nunca escriben el payload ni los headers reservados** (`id`, `from`, `role`, `recipient`, `created_at`, `enqueued_at`…): todo eso lo genera la herramienta.
+Agents **never write the payload or reserved headers** (`id`, `from`, `role`, `recipient`, `created_at`, `enqueued_at`…): the tool generates all of that.
 
-### 1.2 El specifier abre la cadena
+### 1.2 The specifier opens the chain
 
-El specifier conversa contigo, escribe `features/cart.feature` (Gherkin) + la suite QA end-to-end, y **te pide aprobación explícita**. Solo después de tu OK commitea y escribe su draft:
+The specifier talks with you, writes `features/cart.feature` (Gherkin) + the end-to-end QA suite, and **asks for your explicit approval**. Only after your OK does it commit and write its draft:
 
 ```text
 type: git_handoff
@@ -42,37 +42,37 @@ task: cart-tax
 commit: 3f9a2c1d7e
 ```
 
-Ejecuta `swarm_handoff.sh draft` → el **gate de validación** hace 4 comprobaciones: `coder` es un rol conocido, `50` es prioridad válida, el commit **resuelve a exactamente un objeto y es un commit** (vía `git rev-parse --disambiguate`), y no hay campos reservados ni cuerpo escrito por el agente. Genera el payload y lo instala atómicamente en el outbox:
+It runs `swarm_handoff.sh draft` → the **validation gate** does 4 checks: `coder` is a known role, `50` is a valid priority, the commit **resolves to exactly one object and is a commit** (via `git rev-parse --disambiguate`), and there are no reserved fields or agent-written body. It generates the payload and installs it atomically in the outbox:
 
 ```text
 50_20260710T120000Z_000042_from_specifier_to_coder.handoff
 ```
 
-El **daemon** (polling 1 s) copia el archivo al `inbox/new/` del coder **añadiendo headers de entrega**, y despierta al coder tecleando en su pane de tmux: *"You have new handoff mail. If idle, run ready_for_next.sh."* + Enter.
+The **daemon** (1 s polling) copies the file to the coder's `inbox/new/` **adding delivery headers**, and wakes the coder by typing into its tmux pane: *"You have new handoff mail. If idle, run ready_for_next.sh."* + Enter.
 
-El archivo entregado (esto es lo que el coder ve):
+The delivered file (this is what the coder sees):
 
 ```text
 id: 20260710T120000Z_000042_from_specifier
 from: specifier
 to: coder
-recipient: coder            ← añadido por el daemon (copia por destinatario)
+recipient: coder            ← added by the daemon (per-recipient copy)
 priority: 50
 type: git_handoff
 role: specifier
 task: cart-tax
 commit: 3f9a2c1d7e
 created_at: 2026-07-10T12:00:00Z
-enqueued_at: 2026-07-10T12:00:01Z  ← añadido por el daemon
+enqueued_at: 2026-07-10T12:00:01Z  ← added by the daemon
 
 Re-read your role and constitution.
 
 merge_and_process specifier 3f9a2c1d7e
 ```
 
-### 1.3 El coder consume la tarea
+### 1.3 The coder consumes the task
 
-El coder ejecuta `ready_for_next.sh` → el helper mueve el archivo de `inbox/new/` a `inbox/in_process/`, **añade `dequeued_at`**, e imprime:
+The coder runs `ready_for_next.sh` → the helper moves the file from `inbox/new/` to `inbox/in_process/`, **adds `dequeued_at`**, and prints:
 
 ```text
 TASK: .swarmforge/handoffs/inbox/in_process/50_..._from_specifier_to_coder.handoff
@@ -86,11 +86,11 @@ Re-read your role and constitution.
 merge_and_process specifier 3f9a2c1d7e
 ```
 
-El coder hace `merge_and_process specifier 3f9a2c1d7e` (merge del commit de la especificación), aplica **TDD** (tests unitarios primero, luego implementación), corre los acceptance tests generados desde el Gherkin, commitea con byline (*"Implement cart tax" — `By coder.`*) y **reenvía a la cadena** con el mismo `task: cart-tax` y su nuevo commit. Regla clave: **un rol intermedio SIEMPRE reenvía**, pase lo que pase (aunque el cambio sea solo de formato).
+The coder does `merge_and_process specifier 3f9a2c1d7e` (merge of the specification commit), applies **TDD** (unit tests first, then implementation), runs the acceptance tests generated from the Gherkin, commits with byline (*"Implement cart tax" — `By coder.`*) and **forwards along the chain** with the same `task: cart-tax` and its new commit. Key rule: **an intermediate role ALWAYS forwards**, no matter what (even if the change is format-only).
 
-### 1.4 El cleaner en modo batch
+### 1.4 The cleaner in batch mode
 
-El cleaner está configurado en `swarmforge.conf` con `batch`. Si llegan 3 handoffs del coder de la misma prioridad, `ready_for_next_batch.sh` los agrupa:
+The cleaner is configured in `swarmforge.conf` with `batch`. If 3 handoffs arrive from the coder at the same priority, `ready_for_next_batch.sh` groups them:
 
 ```text
 BATCH: .swarmforge/handoffs/inbox/in_process/batch_20260710T130000Z_000051
@@ -101,15 +101,15 @@ BATCH_ITEM: 2  → TASK_NAME: user-auth ...
 BATCH_ITEM: 3  → TASK_NAME: cart-coupon ...
 ```
 
-Procesa los 3 como **una pasada de limpieza**: coverage, CRAP ≤ 6, DRY, scan de sitios de mutación (divide ficheros con >100 sitios), acceptance + unit tests, commitea, y reenvía **una vez** al architect.
+It processes all 3 as **one cleanup pass**: coverage, CRAP ≤ 6, DRY, mutation site scan (split files with >100 sites), acceptance + unit tests, commits, and forwards **once** to the architect.
 
-### 1.5 La cadena sigue (architect → hardender → QA)
+### 1.5 The chain continues (architect → hardender → QA)
 
-Cada uno con la misma mecánica: `ready_for_next.sh` (task o batch) → procesa su gate → verifica → commitea con byline → reenvía a la cadena con `task: cart-tax` preservado.
+Each with the same mechanics: `ready_for_next.sh` (task or batch) → process its gate → verify → commit with byline → forward along the chain with `task: cart-tax` preserved.
 
-### 1.6 QA cierra: el "terminal broadcast"
+### 1.6 QA closes: the "terminal broadcast"
 
-Cuando QA verifica todo (suite e2e por UI, consistencia de commits/manifiestos, CRAP/DRY final), commitea y envía **un único handoff a múltiples destinatarios** con `priority: 00`:
+When QA verifies everything (e2e UI suite, commit/manifest consistency, final CRAP/DRY), it commits and sends **a single handoff to multiple recipients** with `priority: 00`:
 
 ```text
 type: git_handoff
@@ -119,94 +119,94 @@ task: cart-tax
 commit: b4d8e2f1a0
 ```
 
-Esta es la **excepción a la regla de reenvío**: cada receptor hace `merge_and_process QA b4d8e2f1a0`, corre sus tests, y **NO reenvía**. El specifier, al recibir el broadcast, fusiona y te pregunta por la siguiente feature. Cadena cerrada.
+This is the **exception to the forwarding rule**: each recipient does `merge_and_process QA b4d8e2f1a0`, runs its tests, and **does NOT forward**. The specifier, on receiving the broadcast, merges and asks you for the next feature. Chain closed.
 
-### 1.7 La máquina de estados de cada tarea
+### 1.7 Each task's state machine
 
 ```text
 inbox/new/ ──ready_for_next──► inbox/in_process/ ──done_with_current──► inbox/completed/
-   (entrega del daemon)         (+dequeued_at)        (+completed_at)
+   (daemon delivery)            (+dequeued_at)        (+completed_at)
 ```
 
-- `done_with_current.sh` **recoge la siguiente tarea o batch automáticamente** si hay cola → los agentes no se quedan ociosos.
-- Si un wake-up llega mientras el agente trabaja → **se ignora**; la cola no se pierde porque el estado vive en archivos.
-- Reinicio del swarm → los agentes re-ejecutan `ready_for_next.sh` y reanudan desde `in_process`.
+- `done_with_current.sh` **picks up the next task or batch automatically** if there is a queue → agents do not sit idle.
+- If a wake-up arrives while the agent is working → **it is ignored**; the queue is not lost because state lives in files.
+- Swarm restart → agents re-run `ready_for_next.sh` and resume from `in_process`.
 
 ---
 
-## 2. Las reglas para un pipeline determinista
+## 2. Rules for a deterministic pipeline
 
-El determinismo no sale de un solo sitio: sale de **cuatro capas de reglas** que se refuerzan mutuamente.
+Determinism does not come from one place: it comes from **four layers of rules** that reinforce each other.
 
-### 2.1 Capa 1 — Reglas compartidas (constitución)
+### 2.1 Layer 1 — Shared rules (constitution)
 
-**`workflow.prompt`** (disciplina de trabajo):
+**`workflow.prompt`** (work discipline):
 
-- Cada rol trabaja **solo en su worktree/branch asignado**; prohibido difflinear/fusionar branches ajenos salvo handoff explícito.
-- Todo commit lleva byline: `By <rol>.`
-- Archivos temporales en `./tmp/` del worktree, no en `/tmp`.
-- Si el layout git esperado no existe → **parar y reportar**, no improvisar.
+- Each role works **only in its assigned worktree/branch**; forbidden to diff/merge foreign branches except via explicit handoff.
+- Every commit carries a byline: `By <role>.`
+- Temporary files under `./tmp/` of the worktree, not `/tmp`.
+- If the expected git layout does not exist → **stop and report**, do not improvise.
 
-**`handoffs.prompt`** (protocolo):
+**`handoffs.prompt`** (protocol):
 
-- Solo `git_handoff` y `note`; las notes requieren autorización explícita.
-- Ante ambigüedad/contradicción → **parar y preguntar**, no mandar notes.
-- **Reenvío de cadena obligatorio**: cada rol intermedio reenvía a la siguiente etapa tras completar, incluso si el cambio es no-funcional (formato, manifiestos, metadatos).
-- **Broadcast terminal = merge-only**: los receptores del handoff final no reenvían.
-- `task:` se preserva al reenviar; se inventa un nombre estable solo para trabajo nuevo.
-- Prohibido editar/añadir/commitear el estado runtime de handoffs.
+- Only `git_handoff` and `note`; notes require explicit authorization.
+- On ambiguity/contradiction → **stop and ask**, do not send notes.
+- **Mandatory chain forwarding**: each intermediate role forwards to the next stage after completing, even if the change is non-functional (format, manifests, metadata).
+- **Terminal broadcast = merge-only**: recipients of the final handoff do not forward.
+- `task:` is preserved when forwarding; invent a stable name only for new work.
+- Forbidden to edit/add/commit handoff runtime state.
 
-**`engineering.prompt`** (reglas técnicas):
+**`engineering.prompt`** (technical rules):
 
-- TDD: tests unitarios primero, luego producción mínima para pasar.
-- Las herramientas de calidad (mutation/CRAP/DRY/coverage) solo corren sobre **módulos testeables**; los módulos "ambientalmente inadecuados" quedan como adapters excluidos.
-- Acceptance vía `gherkin-parser` (APS) — prohibido reimplementar el parser.
-- Verificación local antes de cada handoff; comandos de verificación nunca concurrentes entre sí.
-- Guardrails: no editar manifiestos de mutation a mano; no commitear artefactos no relacionados.
+- TDD: unit tests first, then minimal production to pass.
+- Quality tools (mutation/CRAP/DRY/coverage) run only on **testable modules**; "environmentally unsuitable" modules remain as excluded adapters.
+- Acceptance via `gherkin-parser` (APS) — forbidden to reimplement the parser.
+- Local verification before each handoff; verification commands never concurrent with each other.
+- Guardrails: do not edit mutation manifests by hand; do not commit unrelated artifacts.
 
-### 2.2 Capa 2 — Reglas por rol (six-pack)
+### 2.2 Layer 2 — Per-role rules (six-pack)
 
-| Rol | Owns | **Does Not Own** (frontera) | Verificación antes de handoff | Obligación de handoff |
+| Role | Owns | **Does Not Own** (boundary) | Verification before handoff | Handoff obligation |
 |---|---|---|---|---|
-| **specifier** | Gherkin + acceptance criteria + suite QA e2e | No corre mutation ni quality tools | Tests si hace falta; **nada más** | **No commitea ni reenvía sin tu aprobación**. Tras tu OK: commit + handoff al coder con `task:` inventado |
-| **coder** | Implementación de slices aprobados con TDD | QA suite, mutation, CRAP/DRY, Gherkin mutation | Unit tests + acceptance tests | Commit + handoff al cleaner |
-| **cleaner** (batch) | Limpieza preservando comportamiento: nombres, duplicación, boundaries, cobertura | Mutation tests, Gherkin mutation, **nuevo comportamiento** | CRAP ≤ 6, DRY, scan de sitios de mutation, acceptance + unit | Commit + handoff al architect **antes de tomar otra tarea/batch** |
-| **architect** (batch) | Estructura, boundaries, dirección de dependencias, hardening de mutation, DRY, property tests | — (hereda la cadena) | Mutation por fichero (diferencial), DRY, property tests, Gherkin soft | Commit + handoff al hardender |
-| **hardender** (batch) | Mutation hardening (matar supervivientes), Gherkin mutation, CRAP/DRY final | Suite QA e2e del specifier | Mutation → Gherkin soft → CRAP → DRY | Commit + handoff a QA |
-| **QA** (batch) | Verificación final independiente, convertir QA suite en scripts ejecutables, e2e por UI | Mutation y Gherkin mutation | Suite e2e por UI, consistencia de handoffs/manifiestos, CRAP/DRY | Commit + **broadcast priority 00 a todos** (merge-only) |
+| **specifier** | Gherkin + acceptance criteria + e2e QA suite | Does not run mutation or quality tools | Tests if needed; **nothing more** | **Does not commit or forward without your approval**. After your OK: commit + handoff to coder with invented `task:` |
+| **coder** | Implementation of approved slices with TDD | QA suite, mutation, CRAP/DRY, Gherkin mutation | Unit tests + acceptance tests | Commit + handoff to cleaner |
+| **cleaner** (batch) | Cleanup preserving behavior: names, duplication, boundaries, coverage | Mutation tests, Gherkin mutation, **new behavior** | CRAP ≤ 6, DRY, mutation site scan, acceptance + unit | Commit + handoff to architect **before taking another task/batch** |
+| **architect** (batch) | Structure, boundaries, dependency direction, mutation hardening, DRY, property tests | — (inherits the chain) | Per-file mutation (differential), DRY, property tests, Gherkin soft | Commit + handoff to hardender |
+| **hardender** (batch) | Mutation hardening (kill survivors), Gherkin mutation, final CRAP/DRY | Specifier's e2e QA suite | Mutation → Gherkin soft → CRAP → DRY | Commit + handoff to QA |
+| **QA** (batch) | Independent final verification, turn QA suite into executable scripts, e2e via UI | Mutation and Gherkin mutation | e2e UI suite, handoff/manifest consistency, CRAP/DRY | Commit + **broadcast priority 00 to all** (merge-only) |
 
-### 2.3 Capa 3 — Reglas del transporte (el gate)
+### 2.3 Layer 3 — Transport rules (the gate)
 
-- `swarm_handoff.sh` **rechaza** drafts con: campos reservados, roles desconocidos, prioridad no numérica (00–99), commits ambiguos o no-commits, `task` > 80 chars, cuerpos escritos por el agente. El agente repara y reintenta; nada malformado entra en la cola.
-- Prioridades: **50** = avance normal de cadena, **00** = broadcast terminal / trabajo urgente de seguimiento. La cola ordena por `prioridad_timestamp_secuencia`, así el orden es **determinista aunque lleguen en el mismo segundo**.
-- Los roles `batch` consumen **todos los handoffs de igual prioridad como una unidad** → el cleaner/reviewer no interrumpe su pasada por cada entrega.
-- Los agentes **no hablan con tmux**: el daemon es el único con acceso al socket; los agentes solo escriben archivos en su outbox. El canal de control y el canal de estado están separados.
+- `swarm_handoff.sh` **rejects** drafts with: reserved fields, unknown roles, non-numeric priority (00–99), ambiguous or non-commit commits, `task` > 80 chars, agent-written bodies. The agent repairs and retries; nothing malformed enters the queue.
+- Priorities: **50** = normal chain progress, **00** = terminal broadcast / urgent follow-up work. The queue orders by `priority_timestamp_sequence`, so order is **deterministic even if they arrive in the same second**.
+- `batch` roles consume **all equal-priority handoffs as one unit** → cleaner/reviewer does not interrupt its pass for each delivery.
+- Agents **do not talk to tmux**: the daemon is the only one with socket access; agents only write files to their outbox. Control channel and state channel are separated.
 
-### 2.4 Capa 4 — Reglas del estado (la cola como máquina de estados)
+### 2.4 Layer 4 — State rules (the queue as a state machine)
 
-- `new → in_process → completed` con timestamps de auditoría (`enqueued_at`, `dequeued_at`, `completed_at`).
-- **Reanudación**: el estado vive en archivos, no en memoria — reinicias el swarm y `ready_for_next.sh` reanuda desde `in_process`.
-- `done_with_current.sh` **encadena la siguiente tarea** automáticamente → el pipeline avanza sin intervención humana entre gates.
+- `new → in_process → completed` with audit timestamps (`enqueued_at`, `dequeued_at`, `completed_at`).
+- **Resumption**: state lives in files, not memory — you restart the swarm and `ready_for_next.sh` resumes from `in_process`.
+- `done_with_current.sh` **chains the next task** automatically → the pipeline advances without human intervention between gates.
 
-### 2.5 De dónde sale el determinismo (resumen)
+### 2.5 Where determinism comes from (summary)
 
-1. **Tipos de mensaje cerrados** (2) y **gate de validación estricto** → nada ambiguo entra en el sistema.
-2. **Reenvío de cadena obligatorio** + **broadcast merge-only** → el orden de procesamiento es siempre el mismo, sin saltos ni bucles.
-3. **Fronteras de propiedad** ("Does Not Own") → cada agente solo toca lo suyo; nadie pisa el trabajo del otro (el coder no hace mutation; el cleaner no introduce comportamiento).
-4. **Verificación obligatoria antes de cada handoff** → un handoff solo existe si su gate pasó.
-5. **Aislamiento por worktree** → cada rol ve solo su branch; el merge ocurre explícitamente vía `merge_and_process` en el momento del handoff.
-6. **Nombre de tarea estable + prioridad + secuencia** → trazabilidad total: puedes seguir `cart-tax` de commit en commit por toda la cadena.
+1. **Closed message types** (2) and **strict validation gate** → nothing ambiguous enters the system.
+2. **Mandatory chain forwarding** + **merge-only broadcast** → processing order is always the same, with no skips or loops.
+3. **Ownership boundaries** ("Does Not Own") → each agent only touches its own work; nobody steps on another's (coder does not do mutation; cleaner does not introduce behavior).
+4. **Mandatory verification before each handoff** → a handoff only exists if its gate passed.
+5. **Worktree isolation** → each role sees only its branch; merge happens explicitly via `merge_and_process` at handoff time.
+6. **Stable task name + priority + sequence** → full traceability: you can follow `cart-tax` commit by commit through the whole chain.
 
 ---
 
-## 3. Diagramas
+## 3. Diagrams
 
-### 3.1 Pipeline completo (seis roles, `six-pack`)
+### 3.1 Full pipeline (six roles, `six-pack`)
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant U as Usuario
+    participant U as User
     participant S as Specifier
     participant C as Coder
     participant CL as Cleaner (batch)
@@ -214,58 +214,58 @@ sequenceDiagram
     participant H as Hardender (batch)
     participant Q as QA (batch)
 
-    U->>S: Implementar carrito con impuestos
-    S->>U: Gherkin + suite QA e2e (pide aprobación)
-    U-->>S: Aprobado
+    U->>S: Implement cart with tax
+    S->>U: Gherkin + e2e QA suite (asks approval)
+    U-->>S: Approved
     S->>S: commit spec + draft (type/to/priority/task/commit)
-    S->>S: swarm_handoff.sh → outbox (gate: commit canónico)
-    Note over S,C: daemon entrega a inbox/new del coder + wake-up tmux
+    S->>S: swarm_handoff.sh → outbox (gate: canonical commit)
+    Note over S,C: daemon delivers to coder inbox/new + tmux wake-up
     C->>C: ready_for_next.sh → in_process + TASK cart-tax
     C->>C: merge_and_process specifier `<commit>` + TDD + acceptance
-    C->>C: commit + byline + reenvío (mismo task)
-    Note over C,CL: daemon entrega (varios handoffs de igual prioridad)
+    C->>C: commit + byline + forward (same task)
+    Note over C,CL: daemon delivers (several equal-priority handoffs)
     CL->>CL: ready_for_next.sh → BATCH (N items)
-    CL->>CL: CRAP ≤ 6 + DRY + scan mutation + tests
-    CL->>CL: commit + reenvío al architect
-    A->>A: estructura + dependencias + mutation diferencial + DRY
-    A->>A: commit + reenvío al hardender
+    CL->>CL: CRAP ≤ 6 + DRY + mutation scan + tests
+    CL->>CL: commit + forward to architect
+    A->>A: structure + dependencies + differential mutation + DRY
+    A->>A: commit + forward to hardender
     H->>H: mutation hardening + Gherkin soft + CRAP/DRY
-    H->>H: commit + reenvío a QA
-    Q->>Q: suite e2e por UI + consistencia de handoffs
+    H->>H: commit + forward to QA
+    Q->>Q: e2e UI suite + handoff consistency
     Q->>Q: commit + broadcast priority 00 (merge-only)
-    Q-->>S: merge_and_process QA `<commit>` — sin reenvío
-    S->>U: ¿Siguiente feature?
+    Q-->>S: merge_and_process QA `<commit>` — no forward
+    S->>U: Next feature?
 ```
 
-### 3.2 Cadena de handoffs y prioridades
+### 3.2 Handoff chain and priorities
 
 ```mermaid
 flowchart LR
-    U[Usuario] -->|"intención"| S[Specifier]
-    S -->|"git_handoff p50 · task estable"| C[Coder]
+    U[User] -->|"intent"| S[Specifier]
+    S -->|"git_handoff p50 · stable task"| C[Coder]
     C -->|"git_handoff p50"| CL[Cleaner · batch]
     CL -->|"git_handoff p50"| A[Architect · batch]
     A -->|"git_handoff p50"| H[Hardender · batch]
     H -->|"git_handoff p50"| Q[QA · batch]
     Q -->|"git_handoff p00 · broadcast merge-only"| S
-    S -.->|"aprobación humana"| U
+    S -.->|"human approval"| U
 ```
 
-### 3.3 Ciclo de vida de una tarea
+### 3.3 Task lifecycle
 
 ```mermaid
 stateDiagram-v2
-    [*] --> new: daemon entrega .handoff
+    [*] --> new: daemon delivers .handoff
     new --> in_process: ready_for_next.sh (dequeued_at)
     in_process --> completed: done_with_current.sh (completed_at)
-    in_process --> in_process: siguiente tarea o batch encolado
-    new --> [*]: NO_TASK (cola vacía)
+    in_process --> in_process: next queued task or batch
+    new --> [*]: NO_TASK (empty queue)
 ```
 
 ---
 
-## 4. Notas de sintaxis mermaid (validado con v11.13.0)
+## 4. Mermaid syntax notes (validated with v11.13.0)
 
-- En mensajes de `sequenceDiagram` no usar entidades `&lt;`/`&gt;` — usar backticks: `` `<commit>` ``.
-- En labels de `flowchart` no usar comillas dobles escapadas (`\"`) — usar comillas simples internas o texto plano.
-- `<br/>` sí funciona dentro de mensajes de secuencia y labels.
+- In `sequenceDiagram` messages do not use `&lt;`/`&gt;` entities — use backticks: `` `<commit>` ``.
+- In `flowchart` labels do not use escaped double quotes (`\"`) — use inner single quotes or plain text.
+- `<br/>` does work inside sequence messages and labels.

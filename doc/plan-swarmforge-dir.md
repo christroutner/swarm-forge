@@ -1,97 +1,97 @@
-# Plan: Opción B — `SWARMFORGE_DIR` (maquinaria externa, config por proyecto)
+# Plan: Option B — `SWARMFORGE_DIR` (external machinery, per-project config)
 
-> **Estado**: pendiente de implementación — documento de trabajo para retomar más tarde.
-> **Contexto**: salió de la corrida de prueba con `saas-prototype` (ver README del fork).
-> El objetivo es que los proyectos no lleven el código de SwarmForge, solo su configuración.
+> **Status**: pending implementation — working document to resume later.
+> **Context**: came out of the trial run with `saas-prototype` (see the fork README).
+> The goal is that projects do not carry SwarmForge code, only their configuration.
 
-## 1. Objetivo
+## 1. Goal
 
-El proyecto deja de llevar el **código** de SwarmForge (scripts) y las **reglas compartidas**
-(artículos, roles por defecto). Solo conserva su **configuración propia** (`swarmforge.conf` +
-`project.prompt` + overrides). El fork (o cualquier ubicación compartida vía `SWARMFORGE_DIR`)
-es la única fuente de la maquinaria. Con `SWARMFORGE_DIR` sin definir, **todo sigue funcionando
-como ahora** (retrocompatibilidad total).
+The project stops carrying SwarmForge **code** (scripts) and **shared rules**
+(articles, default roles). It only keeps its **own configuration** (`swarmforge.conf` +
+`project.prompt` + overrides). The fork (or any shared location via `SWARMFORGE_DIR`)
+is the sole source of the machinery. With `SWARMFORGE_DIR` unset, **everything still works
+as today** (full backward compatibility).
 
-## 2. Diseño: dónde vive cada cosa
+## 2. Design: where each thing lives
 
 ```
-SWARMFORGE_DIR (base, ej. ~/.local/share/swarmforge = clon del fork)
-├── swarm/ + swarmforge/scripts/          ← launcher, daemon, helpers, adaptadores
-├── swarmforge/roles/*.prompt             ← roles por defecto
-└── swarmforge/constitution/articles/     ← engineering, handoffs, workflow (compartidos)
+SWARMFORGE_DIR (base, e.g. ~/.local/share/swarmforge = fork clone)
+├── swarm/ + swarmforge/scripts/          ← launcher, daemon, helpers, adapters
+├── swarmforge/roles/*.prompt             ← default roles
+└── swarmforge/constitution/articles/     ← engineering, handoffs, workflow (shared)
 
-PROYECTO
-└── swarmforge/                            ← "delgado": SOLO lo por-proyecto
-    ├── swarmforge.conf                    ← roles + modelos del proyecto
-    └── constitution/articles/project.prompt (+ local-*.prompt, overrides de roles si hay)
+PROJECT
+└── swarmforge/                            ← "thin": ONLY per-project material
+    ├── swarmforge.conf                    ← project roles + models
+    └── constitution/articles/project.prompt (+ local-*.prompt, role overrides if any)
 ```
 
-**Regla de merge**: el proyecto gana por nombre — si el proyecto tiene
-`roles/cleaner.prompt`, ese manda; si no, se usa el del base.
+**Merge rule**: the project wins by name — if the project has
+`roles/cleaner.prompt`, that takes precedence; otherwise the base one is used.
 
-## 3. Cambios de código (archivo por archivo)
+## 3. Code changes (file by file)
 
-| Archivo | Cambio | Por qué |
+| File | Change | Why |
 |---|---|---|
-| `swarmforge.bb` → `context` | Añadir `:base-dir` = `(or (System/getenv "SWARMFORGE_DIR") (fs/path working-dir "swarmforge"))`; mantener `:swarm-forge-dir` = `working-dir/swarmforge` (config del proyecto) | Base compartida vs. config por proyecto |
-| `swarmforge.bb` → `parse-config` | `roles-dir` = lookup por rol: `proyecto/roles/<rol>.prompt` si existe, si no `base/roles/<rol>.prompt` | Overrides de roles |
-| `swarmforge.bb` → nueva `sync-shared-config!` | Para cada worktree **y para master**: copiar de `base` los artículos compartidos y los roles por defecto al `swarmforge/` destino **solo si faltan** (los del proyecto ganan); scripts como hoy | El agente lee `swarmforge/constitution.prompt` relativo a su cwd — tras el sync, el view fusionado está ahí |
-| `swarmforge.bb` → `prepare-workspace!` / setup | Al sincronizar en master (raíz del proyecto), añadir a `.gitignore` los archivos derivados (artículos compartidos) para que el git del proyecto quede limpio | Los shared articles se generan en el arranque, no se commitean |
-| `write-agent-instruction-file!` | **Sin cambios** | Las rutas relativas siguen funcionando porque el sync fusiona el view en cada worktree |
-| `check-helper-scripts!` | **Sin cambios** (valida `script-dir`, que apunta al base) | — |
-| `handoffd.bb`, helpers, adaptadores | **Sin cambios** | Ya resuelven el proyecto por git (`roles.tsv`) |
-| `swarm` wrapper | Pequeño ajuste de doc/instalación: al instalarlo globalmente, ejecuta `swarmforge.sh` del base; el bloque de descarga queda para el primer setup | Instalación global |
+| `swarmforge.bb` → `context` | Add `:base-dir` = `(or (System/getenv "SWARMFORGE_DIR") (fs/path working-dir "swarmforge"))`; keep `:swarm-forge-dir` = `working-dir/swarmforge` (project config) | Shared base vs. per-project config |
+| `swarmforge.bb` → `parse-config` | `roles-dir` = per-role lookup: `project/roles/<role>.prompt` if it exists, else `base/roles/<role>.prompt` | Role overrides |
+| `swarmforge.bb` → new `sync-shared-config!` | For each worktree **and for master**: copy from `base` the shared articles and default roles into the destination `swarmforge/` **only if missing** (project ones win); scripts as today | The agent reads `swarmforge/constitution.prompt` relative to its cwd — after sync, the merged view is there |
+| `swarmforge.bb` → `prepare-workspace!` / setup | When syncing on master (project root), add derived files (shared articles) to `.gitignore` so the project's git stays clean | Shared articles are generated at startup, not committed |
+| `write-agent-instruction-file!` | **No changes** | Relative paths still work because sync merges the view into each worktree |
+| `check-helper-scripts!` | **No changes** (validates `script-dir`, which points at the base) | — |
+| `handoffd.bb`, helpers, adapters | **No changes** | Already resolve the project via git (`roles.tsv`) |
+| `swarm` wrapper | Small install/docs tweak: when installed globally, it runs the base `swarmforge.sh`; the download block remains for first-time setup | Global install |
 
-**Total estimado**: ~40-60 líneas nuevas/modificadas en `swarmforge.bb` + docs. Nada más.
+**Estimated total**: ~40-60 new/modified lines in `swarmforge.bb` + docs. Nothing else.
 
-## 4. Setup del usuario (una vez)
+## 4. User setup (once)
 
 ```bash
-# 1. Instalar la maquinaria una sola vez
+# 1. Install the machinery once
 git clone https://github.com/pablo-io/swarm-forge ~/.local/share/swarmforge
 ln -s ~/.local/share/swarmforge/swarm ~/.local/bin/swarm
-export SWARMFORGE_DIR=~/.local/share/swarmforge   # (en tu .bashrc)
+export SWARMFORGE_DIR=~/.local/share/swarmforge   # (in your .bashrc)
 
-# 2. En cualquier proyecto: crear SOLO la config
+# 2. In any project: create ONLY the config
 mkdir -p swarmforge/constitution/articles
-# swarmforge.conf + project.prompt (+ local-* / overrides si aplica)
+# swarmforge.conf + project.prompt (+ local-* / overrides if applicable)
 
-# 3. Correr
-cd /mi/proyecto && swarm
+# 3. Run
+cd /my/project && swarm
 ```
 
-## 5. Plan de pruebas
+## 5. Test plan
 
-1. **`bb test`** — la suite existente (24 tests) debe pasar sin cambios de semántica.
-2. **Modo B**: proyecto mínimo con solo conf + `project.prompt` → lanzar con `SWARMFORGE_DIR`
-   → verificar: worktrees con el view fusionado (artículos compartidos + roles + scripts),
-   master funcional, arranque limpio.
-3. **Handoff smoke**: un handoff real end-to-end (como el de la corrida de `saas-prototype`)
-   con el modo B.
-4. **Retrocompatibilidad**: `saas-prototype` (con `swarmforge/` completo) sin la env var →
-   debe seguir funcionando igual.
-5. **Sincronización**: cambiar un script en el fork (ej. un fix) → se refleja sin copiar nada
-   al proyecto.
+1. **`bb test`** — the existing suite (24 tests) must pass with no semantic changes.
+2. **Mode B**: minimal project with only conf + `project.prompt` → launch with `SWARMFORGE_DIR`
+   → verify: worktrees with the merged view (shared articles + roles + scripts),
+   functional master, clean startup.
+3. **Handoff smoke**: a real end-to-end handoff (like the `saas-prototype` run)
+   under mode B.
+4. **Backward compatibility**: `saas-prototype` (with full `swarmforge/`) without the env var →
+   must keep working the same.
+5. **Sync**: change a script in the fork (e.g. a fix) → it is reflected without copying
+   anything into the project.
 
-## 6. Migración opcional de `saas-prototype` (después de validar B)
+## 6. Optional migration of `saas-prototype` (after validating B)
 
-- Adelgazar su `swarmforge/`: borrar `scripts/`, `roles/`, y los artículos compartidos; dejar
-  `swarmforge.conf` + `project.prompt` (con las reglas de diseño).
-- Re-copiar los prompts actualizados del fork (`architect.prompt` con la regla del reporte
-  escrito) — ahora vía el base, no por copia manual.
+- Thin its `swarmforge/`: delete `scripts/`, `roles/`, and shared articles; leave
+  `swarmforge.conf` + `project.prompt` (with the design rules).
+- Re-copy updated prompts from the fork (`architect.prompt` with the written-report
+  rule) — now via the base, not manual copy.
 
-## 7. Riesgos / decisiones abiertas
+## 7. Risks / open decisions
 
-- **Los artículos compartidos sincronizados en master** quedarán gitignored (derivados) — si
-  alguien quiere versionarlos explícitamente, que los commitee (el sync no pisa los existentes).
-- **`roles.tsv` y el estado** siguen en `.swarmforge/` del proyecto (gitignored) — no cambia.
-- La instrucción a los agentes sigue siendo relativa al worktree — clave del diseño
-  (cero cambios en el protocolo).
+- **Shared articles synced onto master** will be gitignored (derived) — if someone wants
+  to version them explicitly, they can commit them (sync does not overwrite existing ones).
+- **`roles.tsv` and state** stay under the project's `.swarmforge/` (gitignored) — unchanged.
+- Agent instructions remain relative to the worktree — key to the design
+  (zero protocol changes).
 
-## 8. Orden de implementación sugerido
+## 8. Suggested implementation order
 
-1. `context` + `parse-config` (base dir + lookup de roles)
-2. `sync-shared-config!` + gitignore de derivados
+1. `context` + `parse-config` (base dir + role lookup)
+2. `sync-shared-config!` + gitignore for derived files
 3. `bb test`
-4. Prueba en modo B con un proyecto mínimo
-5. Doc en el README del fork (sección "SWARMFORGE_DIR mode")
+4. Mode B trial with a minimal project
+5. Doc in the fork README ("SWARMFORGE_DIR mode" section)

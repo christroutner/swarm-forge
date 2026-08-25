@@ -108,7 +108,7 @@ in the same commit as the review changes. Because it is a git commit, the report
 
 - travels with the branch and arrives on `master` when the specifier merges the architect's work,
 - is versioned — you can diff `docs/reviews/` across runs to see every review checkpoint
-  ("los cortes" of the pipeline),
+  (the pipeline "cuts"),
 - replaces the informal closing message the architect used to leave only in its own TUI.
 
 Example layout after a run:

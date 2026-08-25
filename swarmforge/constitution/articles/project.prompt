@@ -1,8 +1,8 @@
 # Project Rules
 
 ## Project Shape
-- This project is configured for SwarmForge with four Codex-backed agents: specifier, coder, refactorer, and architect.
-- Project language: Babashka.
+- This project is configured for SwarmForge with four pi-backed agents: specifier, coder, refactorer, and architect.
+- Project language: JavaScript
 
 ## Local Configuration
 - Preserve project-local SwarmForge configuration under `swarmforge/`.

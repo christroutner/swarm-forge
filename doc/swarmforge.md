@@ -1,132 +1,132 @@
-# SwarmForge — Descripción, protocolo y requisitos de migración
+# SwarmForge — Description, protocol, and migration requirements
 
-> Documento de trabajo. Fuente del proyecto: https://github.com/unclebob/swarm-forge
-> Objetivo: entender la arquitectura de SwarmForge y evaluar su adaptación a **pi** como agente, sobre **Linux**, con modelos **DeepSeek / GLM / Qwen**.
+> Working document. Project source: https://github.com/unclebob/swarm-forge
+> Goal: understand SwarmForge's architecture and evaluate adapting it to **pi** as the agent, on **Linux**, with **DeepSeek / GLM / Qwen** models.
 
 ---
 
-## 1. Descripción del proyecto
+## 1. Project description
 
-**SwarmForge** es una plataforma de orquestación de agentes basada en **tmux** que convierte un enjambre de agentes de IA en un equipo de ingeniería de software coordinado. Fue creada por Robert C. Martin y aplica su propia disciplina de ingeniería (TDD, Gherkin/acceptance testing, mutation testing, análisis CRAP/DRY) al problema de coordinar agentes.
+**SwarmForge** is a **tmux**-based agent orchestration platform that turns a swarm of AI agents into a coordinated software engineering team. It was created by Robert C. Martin and applies his own engineering discipline (TDD, Gherkin/acceptance testing, mutation testing, CRAP/DRY analysis) to the problem of coordinating agents.
 
-Idea central: **cada agente vive en su propio git worktree y en su propia sesión tmux**, y los agentes se comunican mediante un **protocolo de handoff por archivos** entregado por un daemon. No hay mensajes directos entre agentes ni acceso directo al socket de tmux por parte de ellos.
+Core idea: **each agent lives in its own git worktree and its own tmux session**, and agents communicate via a **file-based handoff protocol** delivered by a daemon. There are no direct messages between agents and no direct access to the tmux socket by them.
 
-### Estructura de ramas
+### Branch structure
 
-| Rama | Descripción | Roles |
+| Branch | Description | Roles |
 |---|---|---|
-| `main` | **Documental**: scripts operativos compartidos + artículos de constitución por defecto | — |
-| `two-pack` | Workflow backend rápido (TDD + hardening, sin Gherkin) | `coder` → `cleaner` → `coder` |
-| `four-pack` | Workflow compacto con especificación Gherkin | `specifier` → `coder` → `refactorer` → `architect` → `specifier` |
-| `six-pack` | Workflow completo con todos los quality gates separados | `specifier` → `coder` → `cleaner` → `architect` → `hardender` → `QA` → fin |
+| `main` | **Documentary**: shared operational scripts + default constitution articles | — |
+| `two-pack` | Fast backend workflow (TDD + hardening, no Gherkin) | `coder` → `cleaner` → `coder` |
+| `four-pack` | Compact workflow with Gherkin specification | `specifier` → `coder` → `refactorer` → `architect` → `specifier` |
+| `six-pack` | Full workflow with all quality gates separated | `specifier` → `coder` → `cleaner` → `architect` → `hardender` → `QA` → end |
 
-Cada rama ejecutable contiene la configuración del proyecto: `swarmforge.conf` (topología), `roles/<rol>.prompt` (prompts por rol) y `constitution.prompt` + artículos (reglas compartidas). En el arranque, el wrapper `./swarm` descarga los scripts operativos compartidos desde `main` (solo la primera vez) y lanza el orquestador.
+Each executable branch contains the project config: `swarmforge.conf` (topology), `roles/<role>.prompt` (per-role prompts) and `constitution.prompt` + articles (shared rules). On startup, the `./swarm` wrapper downloads the shared operational scripts from `main` (first time only) and launches the orchestrator.
 
-### Cómo funciona a alto nivel
+### How it works at a high level
 
-1. **Configuración declarativa**: `swarmforge.conf` define el enjambre ventana a ventana:
+1. **Declarative configuration**: `swarmforge.conf` defines the swarm window by window:
    ```
-   window <rol> <agente> <worktree> [task|batch] [args-extra...]
+   window <role> <agent> <worktree> [task|batch] [extra-args...]
    ```
-2. **Launcher** (`swarmforge.bb`, Babashka): valida la config, inicializa el repo git si hace falta, crea un **worktree por rol** bajo `.worktrees/`, crea una **sesión tmux por rol** en un socket propio del proyecto y lanza cada agente con su prompt inicial.
-3. **Agentes**: cada uno corre como TUI interactivo en su pane de tmux, dentro de su worktree, con los scripts de handoff en su `PATH`.
-4. **Daemon** (`handoffd.bb`): dueño del socket tmux. Vigila los outboxes de los agentes, entrega los handoffs a los inboxes de los destinatarios y despierta a los agentes con un mensaje tecleado en su pane.
-5. **Protocolo de handoff**: los agentes crean drafts validados, los reciben como tareas o lotes (`task`/`batch`), y reportan completitud con `done_with_current.sh`.
-6. **Visor opcional**: adaptadores de terminal (`terminal-adapters/*.sh`) abren una ventana por rol para observación en tiempo real, con watchdog que reabre ventanas cerradas sin perder estado del agente.
+2. **Launcher** (`swarmforge.bb`, Babashka): validates the config, initializes the git repo if needed, creates a **worktree per role** under `.worktrees/`, creates a **tmux session per role** on a project-owned socket and launches each agent with its initial prompt.
+3. **Agents**: each runs as an interactive TUI in its tmux pane, inside its worktree, with the handoff scripts on its `PATH`.
+4. **Daemon** (`handoffd.bb`): owner of the tmux socket. Watches agent outboxes, delivers handoffs to recipient inboxes and wakes agents with a message typed into their pane.
+5. **Handoff protocol**: agents create validated drafts, receive them as tasks or batches (`task`/`batch`), and report completion with `done_with_current.sh`.
+6. **Optional viewer**: terminal adapters (`terminal-adapters/*.sh`) open one window per role for real-time observation, with a watchdog that reopens closed windows without losing agent state.
 
-### Características clave
+### Key features
 
-- **Topología config-driven**: la forma del enjambre sale de `swarmforge.conf`, no del código.
-- **Roles por proyecto**: `swarmforge/roles/<rol>.prompt` por rama/backlog.
-- **Constitución en capas**: `constitution.prompt` dirige a los agentes a leer artículos bajo `swarmforge/constitution/articles/` (reglas de ingeniería, handoffs y workflow compartidas + reglas locales por rama).
-- **Backends por rol**: cada rol puede usar un agente CLI distinto (`claude`, `codex`, `copilot`, `grok`).
-- **Observable**: una ventana de terminal por rol, o headless en tmux.
-- **Self-hosted y ligero**: solo requiere tmux, git, zsh y Babashka; todo el estado vive en `.swarmforge/` dentro del proyecto.
-- **Robustez operativa**: prevención de sleep del host (`caffeinate`/`systemd-inhibit`), reanudación de tareas tras reinicio, auditoría por archivos (`new` → `in_process` → `completed`).
+- **Config-driven topology**: swarm shape comes from `swarmforge.conf`, not from code.
+- **Per-project roles**: `swarmforge/roles/<role>.prompt` per branch/backlog.
+- **Layered constitution**: `constitution.prompt` directs agents to read articles under `swarmforge/constitution/articles/` (shared engineering, handoff and workflow rules + local per-branch rules).
+- **Per-role backends**: each role can use a different agent CLI (`claude`, `codex`, `copilot`, `grok`).
+- **Observable**: one terminal window per role, or headless in tmux.
+- **Self-hosted and light**: only needs tmux, git, zsh and Babashka; all state lives in `.swarmforge/` inside the project.
+- **Operational robustness**: host sleep prevention (`caffeinate`/`systemd-inhibit`), task resumption after restart, file-based audit (`new` → `in_process` → `completed`).
 
 ---
 
-## 2. Protocolo de handoff (resumen)
+## 2. Handoff protocol (summary)
 
-El protocolo separa **estado** (archivos en el filesystem, durable y auditable) de **control** (tmux, solo para notificación y liveness).
+The protocol separates **state** (files on the filesystem, durable and auditable) from **control** (tmux, only for notification and liveness).
 
-### Mensajes
+### Messages
 
-Solo dos tipos, ambos estrictamente validados:
+Only two types, both strictly validated:
 
 ```
 type: git_handoff          type: note
-to: <rol>[,<rol>...]       to: <rol>[,<rol>...]
+to: <role>[,<role>...]     to: <role>[,<role>...]
 priority: NN (00-99)       priority: NN (00-99)
-task: <nombre-estable>     message: <1 línea, máx 80 chars>
+task: <stable-name>        message: <1 line, max 80 chars>
 commit: <10 hex>
 ```
 
-- `git_handoff`: el emisor ha commiteado trabajo; el receptor hace `merge_and_process <rol> <commit>`.
-- `note`: mensaje corto; solo cuando la constitución o el rol lo autorizan explícitamente.
+- `git_handoff`: the sender has committed work; the receiver does `merge_and_process <role> <commit>`.
+- `note`: short message; only when the constitution or role explicitly authorizes it.
 
-### Flujo
+### Flow
 
-1. El agente commitea y escribe un **draft** con solo headers.
-2. `swarm_handoff.sh` es la **puerta de validación**: rechaza campos reservados, roles desconocidos, prioridades inválidas, commits ambiguos (canonicaliza el hash con `git rev-parse --disambiguate`) y cuerpos que no sean generados.
-3. El helper genera el payload (`id`, `from`, `role`, `task`, `created_at`, body) y lo instala atómicamente en `outbox/`.
-4. El **daemon** hace polling (1s), copia el handoff al `inbox/new/` de cada destinatario (añadiendo `recipient` y `enqueued_at`) y despierta al receptor.
-5. El receptor ejecuta `ready_for_next.sh` → mueve a `inbox/in_process/` (añade `dequeued_at`) e imprime `TASK:`/`BATCH:` con el payload.
-6. Al completar, `done_with_current.sh` mueve a `inbox/completed/` (añade `completed_at`) y recoge la siguiente tarea si existe.
-7. El daemon mueve el original del emisor a `sent/` o `failed/`.
+1. The agent commits and writes a **draft** with headers only.
+2. `swarm_handoff.sh` is the **validation gate**: rejects reserved fields, unknown roles, invalid priorities, ambiguous commits (canonicalizes the hash with `git rev-parse --disambiguate`) and bodies that are not generated.
+3. The helper generates the payload (`id`, `from`, `role`, `task`, `created_at`, body) and installs it atomically in `outbox/`.
+4. The **daemon** polls (1s), copies the handoff to each recipient's `inbox/new/` (adding `recipient` and `enqueued_at`) and wakes the receiver.
+5. The receiver runs `ready_for_next.sh` → moves to `inbox/in_process/` (adds `dequeued_at`) and prints `TASK:`/`BATCH:` with the payload.
+6. On completion, `done_with_current.sh` moves to `inbox/completed/` (adds `completed_at`) and picks up the next task if one exists.
+7. The daemon moves the sender's original to `sent/` or `failed/`.
 
-### Wake-up (plano de control)
+### Wake-up (control plane)
 
-El daemon "despierta" a un agente tecleando en su pane de tmux:
+The daemon "wakes" an agent by typing into its tmux pane:
 
 ```
-tmux send-keys -t <sesión> -l "You have new handoff mail. If idle, run ready_for_next.sh."
-tmux send-keys -t <sesión> C-m    # Enter
-tmux send-keys -t <sesión> C-j    # LF de robustez
+tmux send-keys -t <session> -l "You have new handoff mail. If idle, run ready_for_next.sh."
+tmux send-keys -t <session> C-m    # Enter
+tmux send-keys -t <session> C-j    # robustness LF
 ```
 
-El agente lo recibe como un mensaje de usuario. Reglas del protocolo: si ya está trabajando, **ignora el wake-up**; `done_with_current.sh` recoge la siguiente tarea al terminar. En la práctica, un agente con cola de mensajes (como pi) encola el wake-up y lo entrega al terminar el turno.
+The agent receives it as a user message. Protocol rules: if it is already working, **ignore the wake-up**; `done_with_current.sh` picks up the next task when finished. In practice, an agent with a message queue (like pi) enqueues the wake-up and delivers it when the turn ends.
 
-### Reglas de cadena
+### Chain rules
 
-- Los roles intermedios **siempre reenvían** un `git_handoff` al siguiente rol de la cadena, pase lo que pase (aunque el cambio sea no funcional).
-- El handoff final de la cadena (broadcast) es **merge-only**: los destinatarios fusionan y no reenvían.
-- Los nombres de tarea (`task:`) se preservan a lo largo de la cadena.
+- Intermediate roles **always forward** a `git_handoff` to the next role in the chain, no matter what (even if the change is non-functional).
+- The final handoff of the chain (broadcast) is **merge-only**: recipients merge and do not forward.
+- Task names (`task:`) are preserved along the chain.
 
 ---
 
-## 3. Requisitos de migración
+## 3. Migration requirements
 
-### 3.1 Contrato de agente (condición necesaria)
+### 3.1 Agent contract (necessary condition)
 
-SwarmForge exige que el agente sea un **proceso interactivo de larga vida en un pane de tmux** que cumpla:
+SwarmForge requires the agent to be a **long-lived interactive process in a tmux pane** that satisfies:
 
-1. **CLI interactivo (TUI/REPL)** que se mantenga corriendo — los wake-ups llegan como texto tecleado + Enter; un CLI one-shot no puede recibir trabajo.
-2. **Prompt inicial por línea de comandos** (o inyectable por `tmux send-keys` tras el arranque).
-3. **Trabajo en el directorio del worktree** (`cd <worktree> && <agente> ...`).
-4. **Capacidad de ejecutar comandos** (los helpers `swarm_handoff.sh`, `ready_for_next.sh`, `done_with_current.sh` son shell/bb en el `PATH` — son agnósticos del modelo).
+1. **Interactive CLI (TUI/REPL)** that keeps running — wake-ups arrive as typed text + Enter; a one-shot CLI cannot receive work.
+2. **Initial prompt via command line** (or injectable via `tmux send-keys` after startup).
+3. **Work in the worktree directory** (`cd <worktree> && <agent> ...`).
+4. **Ability to run commands** (the helpers `swarm_handoff.sh`, `ready_for_next.sh`, `done_with_current.sh` are shell/bb on `PATH` — they are model-agnostic).
 
-Todo lo demás del protocolo (handoffs, worktrees, daemon, wake-ups, watchdog) **no conoce al modelo**: el único punto de integración es el arm de lanzamiento en `swarmforge.bb` y la lista de backends validados en `parse-config`.
+Everything else in the protocol (handoffs, worktrees, daemon, wake-ups, watchdog) **does not know about the model**: the only integration point is the launch arm in `swarmforge.bb` and the validated backend list in `parse-config`.
 
-### 3.2 Validación: pi como agente
+### 3.2 Validation: pi as agent
 
-**Encaja de fábrica.** Verificado en docs y binario instalado:
+**Fits out of the box.** Verified in docs and installed binary:
 
-- `pi "<prompt>"` arranca la TUI, **envía el mensaje inicial y se queda interactivo** (confirmado en `dist/modes/interactive/interactive-mode.js`).
-- **tmux soportado oficialmente** (`docs/tmux.md`). Recomendación: tmux ≥ 3.5 con `extended-keys-format csi-u` para teclas modificadas; el protocolo básico (Enter) funciona con cualquier versión.
-- **Wake-up compatible**: en pi `Enter` = enviar, `Ctrl+J` = nueva línea (el `C-j` del daemon es inofensivo).
-- **Message queue**: un mensaje tecleado mientras pi trabaja se **encola y se entrega al terminar el turno** — ideal para la semántica de wake-up del protocolo.
-- **Sesiones**: `pi -c` (continuar), `--session`, `--name "SwarmForge <Rol>"` (nombre de sesión).
+- `pi "<prompt>"` starts the TUI, **sends the initial message and stays interactive** (confirmed in `dist/modes/interactive/interactive-mode.js`).
+- **tmux officially supported** (`docs/tmux.md`). Recommendation: tmux ≥ 3.5 with `extended-keys-format csi-u` for modified keys; the basic protocol (Enter) works with any version.
+- **Compatible wake-up**: in pi `Enter` = send, `Ctrl+J` = new line (the daemon's `C-j` is harmless).
+- **Message queue**: a message typed while pi is working is **enqueued and delivered when the turn ends** — ideal for the protocol's wake-up semantics.
+- **Sessions**: `pi -c` (continue), `--session`, `--name "SwarmForge <Role>"` (session name).
 
-Requisitos operativos con pi:
+Operational requirements with pi:
 
-| Requisito | Detalle |
+| Requirement | Detail |
 |---|---|
-| Trust prompt | pi pregunta al arrancar en un proyecto nuevo y **bloquearía al agente**. Usar `-a/--approve` en el arm de lanzamiento o pre-sembrar `~/.pi/agent/trust.json`. |
-| Modelo fijado | Usar `--model <provider>/<modelo>` para que cada rol no arranque en el selector de login. |
-| Runtime | Node.js ≥ 22 (instalación npm) o script standalone; Linux soportado nativamente. |
+| Trust prompt | pi asks on startup in a new project and **would block the agent**. Use `-a/--approve` in the launch arm or pre-seed `~/.pi/agent/trust.json`. |
+| Fixed model | Use `--model <provider>/<model>` so each role does not start at the login selector. |
+| Runtime | Node.js ≥ 22 (npm install) or standalone script; Linux supported natively. |
 
-Arm de lanzamiento propuesto en `swarmforge.bb`:
+Proposed launch arm in `swarmforge.bb`:
 
 ```clojure
 "pi" (str "pi -a --name " (sq (str "SwarmForge " display))
@@ -135,106 +135,106 @@ Arm de lanzamiento propuesto en `swarmforge.bb`:
            "\"$(cat " (sq (str prompt-file)) ")\"")
 ```
 
-### 3.3 Validación: opencode como agente
+### 3.3 Validation: opencode as agent
 
-**Encaja con una adaptación obligatoria.** Verificado en el binario real v1.18.15 y en el fuente:
+**Fits with a mandatory adaptation.** Verified on the real v1.18.15 binary and in source:
 
-- `opencode` (sin args) arranca la **TUI interactiva** persistente.
-- ⚠️ La TUI **no acepta mensaje inicial por CLI**: `--prompt` en modo TUI llama a un `rl.question` de Node (espera input por stdin); solo `--mini --prompt` lo envía como mensaje, pero con `interactive: false` (ejecuta y sale). `opencode run "<msg>"` es **headless one-shot** — no sirve como agente del swarm.
-- **Solución**: lanzar la TUI (`opencode --auto`) e **inyectar el prompt con `tmux send-keys`** tras el arranque — el mismo mecanismo que el daemon ya usa para despertar. Son ~10 líneas en `launch-role!` (lanzar → sleep → `send-keys -l "$(cat prompt)"` + Enter).
+- `opencode` (no args) starts the persistent **interactive TUI**.
+- ⚠️ The TUI **does not accept an initial message via CLI**: `--prompt` in TUI mode calls a Node `rl.question` (waits for stdin input); only `--mini --prompt` sends it as a message, but with `interactive: false` (runs and exits). `opencode run "<msg>"` is **headless one-shot** — not usable as a swarm agent.
+- **Solution**: launch the TUI (`opencode --auto`) and **inject the prompt with `tmux send-keys`** after startup — the same mechanism the daemon already uses to wake. About ~10 lines in `launch-role!` (launch → sleep → `send-keys -l "$(cat prompt)"` + Enter).
 
 ```
-opencode --auto -m <provider>/<modelo>    # en la sesión tmux del rol
-# tras ~2s:
-tmux send-keys -t <target> -l "<prompt inicial>" ; tmux send-keys -t <target> C-m
+opencode --auto -m <provider>/<model>    # in the role's tmux session
+# after ~2s:
+tmux send-keys -t <target> -l "<initial prompt>" ; tmux send-keys -t <target> C-m
 ```
 
-Requisitos operativos con opencode:
+Operational requirements with opencode:
 
-| Requisito | Detalle |
+| Requirement | Detail |
 |---|---|
-| Permisos | `--auto` (auto-approve; también existen los aliases ocultos `--yolo` / `--dangerously-skip-permissions`) — equivalente al modo autónomo del swarm. |
-| Sesiones | `-c/--continue`, `-s/--session` para el flujo de reinicio ("on restart, run ready_for_next.sh"). |
-| Runtime | Binario estático (npm `opencode-ai` o release de GitHub); Linux soportado. |
-| A futuro | `opencode serve` + `attach`/SDK/ACP permitirían una cola de mensajes nativa sin wake-ups por teclado (requeriría cambiar la arquitectura, no adaptarla). |
+| Permissions | `--auto` (auto-approve; also the hidden aliases `--yolo` / `--dangerously-skip-permissions`) — equivalent to the swarm's autonomous mode. |
+| Sessions | `-c/--continue`, `-s/--session` for the restart flow ("on restart, run ready_for_next.sh"). |
+| Runtime | Static binary (npm `opencode-ai` or GitHub release); Linux supported. |
+| Future | `opencode serve` + `attach`/SDK/ACP would allow a native message queue without keyboard wake-ups (would require changing the architecture, not adapting it). |
 
-### 3.4 Modelos: DeepSeek / GLM / Qwen
+### 3.4 Models: DeepSeek / GLM / Qwen
 
-| Modelo | pi | opencode |
+| Model | pi | opencode |
 |---|---|---|
-| **DeepSeek** | **Nativo**: `DEEPSEEK_API_KEY`, provider `deepseek`, `--model deepseek/...` | **Nativo** en catálogo (`models.dev`): `deepseek-*` |
-| **Qwen** | **Nativo**: `QWEN_TOKEN_PLAN_API_KEY`, providers `qwen-token-plan` / `-individual` / `-cn` (China) | **Nativo**: `qwen3.x-*`, `alibaba-*/qwen*` |
-| **GLM (Zhipu)** | **No nativo**: requiere extensión de provider custom (OpenAI-compatible, `api: "openai-completions"`, `thinkingFormat: "zai"`) o proxy OpenAI-compatible | **Nativo**: `glm-4.x`/`glm-5.x` (`opencode-go/glm-*`, `alibaba-*/glm-*`) |
+| **DeepSeek** | **Native**: `DEEPSEEK_API_KEY`, provider `deepseek`, `--model deepseek/...` | **Native** in catalog (`models.dev`): `deepseek-*` |
+| **Qwen** | **Native**: `QWEN_TOKEN_PLAN_API_KEY`, providers `qwen-token-plan` / `-individual` / `-cn` (China) | **Native**: `qwen3.x-*`, `alibaba-*/qwen*` |
+| **GLM (Zhipu)** | **Not native**: needs a custom provider extension (OpenAI-compatible, `api: "openai-completions"`, `thinkingFormat: "zai"`) or OpenAI-compatible proxy | **Native**: `glm-4.x`/`glm-5.x` (`opencode-go/glm-*`, `alibaba-*/glm-*`) |
 
-Observación: pi ya implementa los formatos de *thinking* de las tres familias (`thinkingFormat: "deepseek" | "zai" | "qwen"` en `docs/custom-provider.md`), lo que simplifica la integración de GLM: solo hay que registrar el endpoint y los modelos con esa extensión.
+Note: pi already implements the *thinking* formats of all three families (`thinkingFormat: "deepseek" | "zai" | "qwen"` in `docs/custom-provider.md`), which simplifies GLM integration: you only need to register the endpoint and models with that extension.
 
 ### 3.5 Linux (runtime)
 
-| Requisito | Estado | Detalle |
+| Requirement | Status | Detail |
 |---|---|---|
-| `zsh` | **Requisito duro** | Los scripts usan `#!/usr/bin/env zsh`. Arch: `pacman -S zsh`. |
-| `tmux` | Requisito | Recomendado ≥ 3.5 (pi con teclas extendidas). |
-| `git` | Requisito | Worktrees y protocolo de commits. |
-| Babashka (`bb`) | Requisito | El launcher y todos los helpers están en Babashka (cross-platform). |
-| Node.js ≥ 22 | Solo pi | Instalación npm de pi (o script standalone). |
-| Terminal | **Headless funciona** | Por defecto en Linux (sin `osascript`/`wt.exe`) el launcher cae a `none`: adjunta el shell actual a la sesión del primer rol y el resto queda detached (`tmux -S <socket> attach -t swarmforge-<rol>`). El enjambre funciona completo sin ventanas. |
-| Ventanas automáticas (opcional) | Por construir | Escribir un `terminal-adapters/wezterm.sh` (o kitty) para Linux: contrato de 5 funciones (~40 líneas). WezTerm es el más scripteable (`wezterm cli`); Ghostty en Linux no tiene control remoto. |
-| Apagado | Prever | El script `close-swarm` vive en la rama `main`; las ramas ejecutables no lo llevan — copiarlo al proyecto o usar el apagado por "cerrar la primera ventana". |
-| Prevención de sleep | Funciona | `systemd-inhibit` en Linux (systemd en ejecución). Desactivar con `SWARMFORGE_PREVENT_SLEEP=0`. |
+| `zsh` | **Hard requirement** | Scripts use `#!/usr/bin/env zsh`. Arch: `pacman -S zsh`. |
+| `tmux` | Required | Recommended ≥ 3.5 (pi with extended keys). |
+| `git` | Required | Worktrees and commit protocol. |
+| Babashka (`bb`) | Required | Launcher and all helpers are Babashka (cross-platform). |
+| Node.js ≥ 22 | pi only | npm install of pi (or standalone script). |
+| Terminal | **Headless works** | By default on Linux (no `osascript`/`wt.exe`) the launcher falls back to `none`: attaches the current shell to the first role's session and the rest stay detached (`tmux -S <socket> attach -t swarmforge-<role>`). The swarm runs fully without windows. |
+| Automatic windows (optional) | To build | Write a `terminal-adapters/wezterm.sh` (or kitty) for Linux: 5-function contract (~40 lines). WezTerm is the most scriptable (`wezterm cli`); Ghostty on Linux has no remote control. |
+| Shutdown | Plan for | The `close-swarm` script lives on the `main` branch; executable branches do not carry it — copy it into the project or use shutdown by "closing the first window". |
+| Sleep prevention | Works | `systemd-inhibit` on Linux (systemd running). Disable with `SWARMFORGE_PREVENT_SLEEP=0`. |
 
-### 3.6 Cambios de código necesarios (mínimos)
+### 3.6 Necessary code changes (minimal)
 
-En `swarmforge/scripts/swarmforge.bb` (la rama de trabajo, p. ej. `four-pack`):
+In `swarmforge/scripts/swarmforge.bb` (the working branch, e.g. `four-pack`):
 
-1. **`parse-config`**: añadir el backend a la lista validada, p. ej. `#{"claude" "codex" "copilot" "grok" "pi"}`.
-2. **`launch-command`**: añadir el arm del nuevo backend (pi: sección 3.2; opencode: sección 3.3).
-3. **`check-backend-dependencies!`**: sin cambios — ya comprueba que el binario exista en `PATH`.
+1. **`parse-config`**: add the backend to the validated list, e.g. `#{"claude" "codex" "copilot" "grok" "pi"}`.
+2. **`launch-command`**: add the new backend's arm (pi: section 3.2; opencode: section 3.3).
+3. **`check-backend-dependencies!`**: no changes — already checks that the binary exists on `PATH`.
 
-En la config del proyecto:
+In the project config:
 
-- `swarmforge.conf`: `window coder pi master` (o `opencode`), con `[task|batch]` y args extra según rol.
+- `swarmforge.conf`: `window coder pi master` (or `opencode`), with `[task|batch]` and extra args per role.
 
-Opcionales según objetivo:
+Optional depending on goal:
 
-- Artículos de constitución compartidos en `swarmforge/constitution/articles/` de la rama (el wrapper solo los *stages* en `scripts/shared-articles/`; conviene confirmar que los agentes leen los que la rama necesita).
-- Adaptador de terminal Linux (sección 3.5).
-- `close-swarm` en el proyecto.
+- Shared constitution articles in `swarmforge/constitution/articles/` of the branch (the wrapper only *stages* them in `scripts/shared-articles/`; confirm agents read what the branch needs).
+- Linux terminal adapter (section 3.5).
+- `close-swarm` in the project.
 
 ---
 
-## 4. Diagrama de arquitectura
+## 4. Architecture diagram
 
 ```mermaid
 flowchart TB
-    subgraph Config["Configuración (por proyecto/rama)"]
-        CONF["swarmforge.conf<br/>window rol agente worktree [task|batch] [args]"]
-        ROLES["swarmforge/roles/&lt;rol&gt;.prompt"]
+    subgraph Config["Configuration (per project/branch)"]
+        CONF["swarmforge.conf<br/>window role agent worktree [task|batch] [args]"]
+        ROLES["swarmforge/roles/&lt;role&gt;.prompt"]
         CONST["swarmforge/constitution.prompt<br/>+ constitution/articles/"]
     end
 
     subgraph Launcher["Launcher — swarmforge.bb (Babashka)"]
-        PARSE["Validar config y prompts"]
-        WT["Git worktrees<br/>.worktrees/&lt;rol&gt; (branch por rol)"]
-        TMUX["Sesiones tmux<br/>swarmforge-&lt;rol&gt; · socket propio del proyecto"]
-        LAUNCH["send-keys: export SWARMFORGE_ROLE<br/>+ PATH helpers + cd worktree<br/>+ &lt;agente&gt; '$(cat prompt)'"]
+        PARSE["Validate config and prompts"]
+        WT["Git worktrees<br/>.worktrees/&lt;role&gt; (branch per role)"]
+        TMUX["tmux sessions<br/>swarmforge-&lt;role&gt; · project-owned socket"]
+        LAUNCH["send-keys: export SWARMFORGE_ROLE<br/>+ PATH helpers + cd worktree<br/>+ &lt;agent&gt; '$(cat prompt)'"]
     end
 
-    subgraph Swarm["Enjambre (1 agente por rol)"]
-        A1["Agente TUI<br/>(pane de tmux)"]
-        A2["Agente TUI<br/>(pane de tmux)"]
-        A3["Agente TUI<br/>(pane de tmux)"]
+    subgraph Swarm["Swarm (1 agent per role)"]
+        A1["Agent TUI<br/>(tmux pane)"]
+        A2["Agent TUI<br/>(tmux pane)"]
+        A3["Agent TUI<br/>(tmux pane)"]
     end
 
-    subgraph Estado["Estado durable — filesystem (.swarmforge/handoffs)"]
+    subgraph State["Durable state — filesystem (.swarmforge/handoffs)"]
         OUT["outbox/ · sent/ · failed/"]
         IN["inbox/ new · in_process · completed"]
     end
 
     subgraph Control["Control — daemon handoffd.bb"]
-        DAEMON["Poll outbox → entrega a inbox<br/>→ wake-up por tmux send-keys"]
+        DAEMON["Poll outbox → deliver to inbox<br/>→ wake-up via tmux send-keys"]
     end
 
-    subgraph Vista["Visor (opcional)"]
+    subgraph Viewer["Viewer (optional)"]
         ADAPT["terminal-adapters/*.sh"]
         WATCH["swarm-window-watchdog"]
     end
@@ -245,64 +245,64 @@ flowchart TB
     PARSE --> WT --> LAUNCH
     PARSE --> TMUX --> LAUNCH
     LAUNCH --> A1 & A2 & A3
-    A1 & A2 & A3 -->|"helpers en PATH:<br/>swarm_handoff.sh"| OUT
+    A1 & A2 & A3 -->|"helpers on PATH:<br/>swarm_handoff.sh"| OUT
     OUT --> DAEMON
-    DAEMON -->|"entrega .handoff"| IN
-    DAEMON -->|"wake-up: texto + Enter"| A1 & A2 & A3
+    DAEMON -->|"deliver .handoff"| IN
+    DAEMON -->|"wake-up: text + Enter"| A1 & A2 & A3
     A1 & A2 & A3 -->|"ready_for_next.sh<br/>done_with_current.sh"| IN
-    A1 & A2 & A3 -->|"trabajo (git)"| WT
-    A1 & A2 & A3 -->|"observar: tmux attach"| TMUX
+    A1 & A2 & A3 -->|"work (git)"| WT
+    A1 & A2 & A3 -->|"observe: tmux attach"| TMUX
     TMUX --> ADAPT --> WATCH
 ```
 
-## 5. Diagrama del protocolo (ciclo de un handoff)
+## 5. Protocol diagram (one handoff cycle)
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant S as Agente emisor (p. ej. coder)
+    participant S as Sender agent (e.g. coder)
     participant V as swarm_handoff.sh (gate)
-    participant O as outbox/ (emisor)
+    participant O as outbox/ (sender)
     participant D as Daemon handoffd.bb
-    participant I as inbox/ (receptor)
-    participant R as Agente receptor (p. ej. cleaner)
+    participant I as inbox/ (receiver)
+    participant R as Receiver agent (e.g. cleaner)
 
-    Note over S: git commit (mensaje con byline del rol)
-    S->>S: Escribe draft (type/to/priority/task/commit)
+    Note over S: git commit (message with role byline)
+    S->>S: Write draft (type/to/priority/task/commit)
     S->>V: swarm_handoff.sh `<draft>`
-    V->>V: Valida: roles conocidos, prioridad 00-99,<br/>commit canónico (10 hex, --disambiguate),<br/>campos reservados, body prohibido
-    V->>O: Instala .handoff generado (id, from, role,<br/>task, created_at, payload merge_and_process)
+    V->>V: Validate: known roles, priority 00-99,<br/>canonical commit (10 hex, --disambiguate),<br/>reserved fields, body forbidden
+    V->>O: Install generated .handoff (id, from, role,<br/>task, created_at, merge_and_process payload)
     V-->>S: HANDOFF QUEUED
     O->>D: Poll (1 s)
-    D->>I: Copia a inbox/new/ de cada destinatario<br/>+ headers recipient, enqueued_at
-    D->>R: tmux send-keys -l 'You have new handoff mail...'<br/>+ C-m (Enter) + C-j (robustez)
-    Note over R: Si está ocupado → ignora (la cola o el<br/>siguiente done_with_current lo recogerá)
-    R->>I: ready_for_next.sh → mueve a in_process/<br/>+ header dequeued_at
+    D->>I: Copy to each recipient inbox/new/<br/>+ recipient, enqueued_at headers
+    D->>R: tmux send-keys -l 'You have new handoff mail...'<br/>+ C-m (Enter) + C-j (robustness)
+    Note over R: If busy → ignore (queue or next<br/>done_with_current will pick it up)
+    R->>I: ready_for_next.sh → move to in_process/<br/>+ dequeued_at header
     I-->>R: TASK: `<path>` / BATCH: `<items>` + PAYLOAD
-    R->>R: merge_and_process `<emisor>` `<commit>`<br/>+ procesa la tarea en su worktree
-    R->>I: done_with_current.sh → completed/<br/>+ header completed_at
-    I-->>R: Siguiente tarea o NO_TASK
-    D->>O: Mueve original a sent/ (o failed/)
+    R->>R: merge_and_process `<sender>` `<commit>`<br/>+ process the task in its worktree
+    R->>I: done_with_current.sh → completed/<br/>+ completed_at header
+    I-->>R: Next task or NO_TASK
+    D->>O: Move original to sent/ (or failed/)
 ```
 
-### Ciclo de vida de una tarea en el inbox
+### Inbox task lifecycle
 
 ```mermaid
 stateDiagram-v2
-    [*] --> new: daemon entrega .handoff
+    [*] --> new: daemon delivers .handoff
     new --> in_process: ready_for_next.sh (dequeued_at)
     in_process --> completed: done_with_current.sh (completed_at)
-    in_process --> in_process: siguiente tarea encolada
-    new --> [*]: NO_TASK (cola vacía)
-    failed --> [*]: error de entrega (outbox del emisor)
+    in_process --> in_process: next queued task
+    new --> [*]: NO_TASK (empty queue)
+    failed --> [*]: delivery error (sender outbox)
 ```
 
 ---
 
-## 6. Resumen ejecutivo
+## 6. Executive summary
 
-1. **La arquitectura es agnóstica del modelo**: el único punto de integración de un backend nuevo es el arm de lanzamiento + la lista de backends validados en `swarmforge.bb`; el protocolo de handoff, worktrees, daemon y wake-ups no conocen al agente.
-2. **pi encaja directamente**: mensaje inicial interactivo por CLI, tmux soportado, cola de mensajes alineada con la semántica de wake-up, DeepSeek/Qwen nativos y GLM con una extensión pequeña.
-3. **opencode encaja con una adaptación**: la TUI no acepta prompt inicial por CLI → inyección por `tmux send-keys` tras el arranque (mecanismo ya existente en el sistema). DeepSeek/GLM/Qwen nativos.
-4. **Linux es ciudadano de primera clase por diseño**: el enjambre vive en tmux, no en ventanas; headless funciona completo. Las ventanas automáticas son solo un adaptador de terminal opcional.
-5. **Requisitos mínimos**: zsh + tmux (≥3.5 recomendado) + git + Babashka + (Node.js para pi) + ~15 líneas de cambios en `swarmforge.bb` + config de providers.
+1. **The architecture is model-agnostic**: the only integration point for a new backend is the launch arm + the validated backend list in `swarmforge.bb`; the handoff protocol, worktrees, daemon and wake-ups do not know about the agent.
+2. **pi fits directly**: interactive initial message via CLI, tmux supported, message queue aligned with wake-up semantics, native DeepSeek/Qwen and GLM with a small extension.
+3. **opencode fits with an adaptation**: the TUI does not accept an initial prompt via CLI → inject via `tmux send-keys` after startup (mechanism already in the system). Native DeepSeek/GLM/Qwen.
+4. **Linux is a first-class citizen by design**: the swarm lives in tmux, not in windows; headless runs fully. Automatic windows are only an optional terminal adapter.
+5. **Minimum requirements**: zsh + tmux (≥3.5 recommended) + git + Babashka + (Node.js for pi) + ~15 lines of changes in `swarmforge.bb` + provider config.
