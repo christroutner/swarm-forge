@@ -7,6 +7,7 @@ workflow) that runs the swarm with **[pi](https://pi.dev)** as the agent harness
 The `four-pack` pipeline is unchanged: `specifier` → `coder` → `refactorer` → `architect` with
 human approval at the specifier gate.
 
+
 ---
 
 ## Quickstart
